@@ -121,4 +121,67 @@ function handleStart(x, y) {
         grabbedPoint = closest;
         // 瞬间同步防止跳变
         grabbedPoint.x = x;
-        grabbedPoint.y = y
+        grabbedPoint.y = y;
+    }
+}
+
+function handleMove(x, y) {
+    if (grabbedPoint) {
+        touchX = x; 
+        touchY = y;
+    }
+}
+
+window.addEventListener('touchstart', e => { 
+    const t = e.touches[0];
+    handleStart(t.clientX, t.clientY); 
+    e.preventDefault(); 
+}, {passive: false});
+
+window.addEventListener('touchmove', e => { 
+    const t = e.touches[0];
+    handleMove(t.clientX, t.clientY); 
+    e.preventDefault(); 
+}, {passive: false});
+
+window.addEventListener('touchend', () => { grabbedPoint = null; });
+
+function update() {
+    if (grabbedPoint) {
+        grabbedPoint.x = touchX;
+        grabbedPoint.y = touchY;
+        grabbedPoint.px = touchX;
+        grabbedPoint.py = touchY;
+    }
+    
+    points.forEach(p => p.update());
+    // 物理步进次数降为 5，兼顾流畅度与拉力
+    for (let i = 0; i < 5; i++) constraints.forEach(c => c.resolve());
+}
+
+function draw() {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.beginPath();
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    for (let c of constraints) {
+        if (!c.broken) {
+            ctx.moveTo(c.p1.x, c.p1.y);
+            ctx.lineTo(c.p2.x, c.p2.y);
+        }
+    }
+    ctx.stroke();
+}
+
+function loop() {
+    update(); draw();
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', init);
+init();
+loop();
+</script>
+</body>
+</html>
