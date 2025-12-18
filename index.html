@@ -18,15 +18,15 @@
 
 <script>
 const config = {
-    resX: 38,            
-    resY: 58,            
+    resX: 40,            
+    resY: 60,            
     stiffness: 0.6,      
     friction: 0.94,      
-    baseBreakThreshold: 3.2, 
-    protectRadius: 85,     
-    randomBreakChance: 0.4, 
-    recoilStrength: 1.8,    
-    maxColorStretch: 18  
+    baseBreakThreshold: 3.5, 
+    protectRadius: 90,     
+    randomBreakChance: 0.35, 
+    recoilStrength: 2.2,    // 增强回弹感
+    maxColorStretch: 16  
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -39,10 +39,10 @@ let grabbedPoint = null;
 let curX = 0, curY = 0;
 
 function interpolateColor(value) {
-    // 高级感配色：从浅烟灰 #888 到 浓郁的暗紫黑 #2C003E 的过渡
-    const r = 136 + (44 - 136) * value;
-    const g = 136 + (0 - 136) * value;
-    const b = 136 + (62 - 136) * value;
+    // 高级感配色：从冷静的灰黑到受力后的深沉暗紫
+    const r = 60 + (40 - 60) * value;
+    const g = 60 + (0 - 60) * value;
+    const b = 60 + (50 - 60) * value;
     return `rgb(${r},${g},${b})`;
 }
 
@@ -64,10 +64,9 @@ class Point {
 class Constraint {
     constructor(p1, p2) {
         this.p1 = p1; this.p2 = p2;
-        const actualDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.initialDist = actualDist;
-        // 每根连线都有随机的抗拉强度因子，打破均匀性
-        this.toughness = 0.8 + Math.random() * 1.5;
+        this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        // 初始韧性微小差异，用于产生不规则破碎
+        this.toughness = 0.9 + Math.random() * 0.4;
         this.broken = false;
     }
     resolve() {
@@ -81,13 +80,13 @@ class Constraint {
             const centerY = (this.p1.y + this.p2.y) / 2;
             const distFromGrab = Math.hypot(centerX - curX, centerY - curY);
 
-            // 保护区外逻辑
+            // 抓取保护区逻辑
             if (distFromGrab > config.protectRadius) {
-                // 结合个体韧性进行断裂判定
+                // 核心逻辑：受力超过阈值 * 随机韧性
                 if (d > this.initialDist * config.baseBreakThreshold * this.toughness) {
                     if (Math.random() < config.randomBreakChance) {
                         this.broken = true;
-                        // 释放应力时的强烈回弹
+                        // 弹性势能瞬间释放的回弹效果
                         const s = config.recoilStrength;
                         if (!this.p1.pinned) { this.p1.x -= dx * s; this.p1.y -= dy * s; }
                         if (!this.p2.pinned) { this.p2.x += dx * s; this.p2.y += dy * s; }
@@ -115,30 +114,20 @@ function init() {
     const spX = width / (config.resX - 1);
     const spY = height / (config.resY - 1);
 
-    // 1. 生成带高度随机扰动的点阵
+    // 1. 生成整齐的初始点阵
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
-            // 大幅增加点位置的不规则性，产生非正方形外观
-            const jitter = 0.7; 
-            const offsetX = (Math.random() - 0.5) * spX * jitter;
-            const offsetY = (Math.random() - 0.5) * spY * jitter;
-            
-            let p = new Point(x * spX + offsetX, y * spY + offsetY);
+            let p = new Point(x * spX, y * spY);
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
     }
     
-    // 2. 建立约束关系
+    // 2. 建立整齐的垂直和水平约束
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
             if (x < config.resX - 1) constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
             if (y < config.resY - 1) constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
-            
-            // 3. 随机增加斜向连线，增加结构的复杂度和破碎后的不规则形状
-            if (x < config.resX - 1 && y < config.resY - 1 && Math.random() > 0.7) {
-                constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x+1]));
-            }
         }
     }
 }
@@ -185,8 +174,7 @@ function draw() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     
-    // 使用稍微粗一点的线条增加质感
-    ctx.lineWidth = 0.8; 
+    ctx.lineWidth = 0.9; 
 
     for (let c of constraints) {
         if (!c.broken) {
