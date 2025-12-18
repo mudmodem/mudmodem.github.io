@@ -18,15 +18,15 @@
 
 <script>
 const config = {
-    resX: 40,            
-    resY: 60,            
-    stiffness: 0.6,      
-    friction: 0.94,      
-    baseBreakThreshold: 3.5, 
-    protectRadius: 90,     
-    randomBreakChance: 0.35, 
-    recoilStrength: 2.2,    // 增强回弹感
-    maxColorStretch: 16  
+    resX: 35,            
+    resY: 55,            
+    stiffness: 0.8,      // 增加刚性，让网格更稳
+    friction: 0.95,      
+    baseBreakThreshold: 6.0, // 大幅提高门槛，防止一拉就全碎
+    protectRadius: 100,    
+    randomBreakChance: 0.2,  
+    recoilStrength: 2.5,   
+    maxColorStretch: 20  
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -39,10 +39,10 @@ let grabbedPoint = null;
 let curX = 0, curY = 0;
 
 function interpolateColor(value) {
-    // 高级感配色：从冷静的灰黑到受力后的深沉暗紫
-    const r = 60 + (40 - 60) * value;
-    const g = 60 + (0 - 60) * value;
-    const b = 60 + (50 - 60) * value;
+    // 从灰黑到受力后的深紫红
+    const r = 80 + (180 - 80) * value;
+    const g = 80 + (20 - 80) * value;
+    const b = 80 + (60 - 80) * value;
     return `rgb(${r},${g},${b})`;
 }
 
@@ -65,8 +65,8 @@ class Constraint {
     constructor(p1, p2) {
         this.p1 = p1; this.p2 = p2;
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        // 初始韧性微小差异，用于产生不规则破碎
-        this.toughness = 0.9 + Math.random() * 0.4;
+        // 给每根线一个微小的、不可见的随机强度，确保撕裂时的不规则性
+        this.toughness = 0.85 + Math.random() * 0.3;
         this.broken = false;
     }
     resolve() {
@@ -80,13 +80,12 @@ class Constraint {
             const centerY = (this.p1.y + this.p2.y) / 2;
             const distFromGrab = Math.hypot(centerX - curX, centerY - curY);
 
-            // 抓取保护区逻辑
+            // 保护区外才允许断裂
             if (distFromGrab > config.protectRadius) {
-                // 核心逻辑：受力超过阈值 * 随机韧性
                 if (d > this.initialDist * config.baseBreakThreshold * this.toughness) {
                     if (Math.random() < config.randomBreakChance) {
                         this.broken = true;
-                        // 弹性势能瞬间释放的回弹效果
+                        // 崩断瞬间的物理回弹
                         const s = config.recoilStrength;
                         if (!this.p1.pinned) { this.p1.x -= dx * s; this.p1.y -= dy * s; }
                         if (!this.p2.pinned) { this.p2.x += dx * s; this.p2.y += dy * s; }
@@ -114,20 +113,25 @@ function init() {
     const spX = width / (config.resX - 1);
     const spY = height / (config.resY - 1);
 
-    // 1. 生成整齐的初始点阵
+    // 1. 生成绝对整齐的点阵
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
             let p = new Point(x * spX, y * spY);
+            // 固定四边
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
     }
     
-    // 2. 建立整齐的垂直和水平约束
+    // 2. 建立标准的十字连接
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
-            if (x < config.resX - 1) constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
-            if (y < config.resY - 1) constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
+            if (x < config.resX - 1) {
+                constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
+            }
+            if (y < config.resY - 1) {
+                constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
+            }
         }
     }
 }
@@ -144,6 +148,10 @@ const onStart = (e) => {
     for (let p of points) {
         const d = Math.hypot(p.x - curX, p.y - curY);
         if (d < minDist) { minDist = d; grabbedPoint = p; }
+    }
+    if (grabbedPoint) {
+        grabbedPoint.x = curX;
+        grabbedPoint.y = curY;
     }
 };
 
@@ -167,20 +175,19 @@ function update() {
         grabbedPoint.px = curX; grabbedPoint.py = curY;
     }
     points.forEach(p => p.update());
-    for (let i = 0; i < 6; i++) constraints.forEach(c => c.resolve());
+    // 增加解算迭代次数确保稳固性
+    for (let i = 0; i < 8; i++) constraints.forEach(c => c.resolve());
 }
 
 function draw() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    
-    ctx.lineWidth = 0.9; 
+    ctx.lineWidth = 1.0; 
 
     for (let c of constraints) {
         if (!c.broken) {
             const d = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
             const ratio = Math.min(1, Math.max(0, d - c.initialDist) / config.maxColorStretch);
-            
             ctx.strokeStyle = interpolateColor(ratio);
             ctx.beginPath();
             ctx.moveTo(c.p1.x, c.p1.y);
