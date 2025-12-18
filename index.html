@@ -3,41 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>移动端蜘蛛网模拟</title>
+    <title>蜘蛛网 - 强制抓取版</title>
     <style>
         * { -webkit-tap-highlight-color: transparent; }
         body { 
-            margin: 0; 
-            background-color: #ffffff; 
-            overflow: hidden; 
-            /* 防止手机浏览器默认的下拉刷新和左右滑动翻页 */
-            touch-action: none; 
-            position: fixed;
-            width: 100%;
-            height: 100%;
+            margin: 0; background-color: #ffffff; overflow: hidden; 
+            touch-action: none; position: fixed; width: 100%; height: 100%;
         }
         canvas { display: block; }
-        .hint {
-            position: absolute; bottom: 30px; width: 100%;
-            text-align: center; color: rgba(0,0,0,0.2);
-            font-family: sans-serif; font-size: 12px;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>
-    <div class="hint">手指拖拽网格节点以拉断 // TOUCH & DRAG</div>
     <canvas id="webCanvas"></canvas>
 
 <script>
 const config = {
-    // 手机端建议降低一点密度以保证 60fps 流畅度
-    resX: 60,            
-    resY: 80,            
+    resX: 50,            // 稍微降低密度以换取极高的响应速度
+    resY: 70,            
     stiffness: 0.9,      
-    friction: 0.95,      
-    breakThreshold: 3.2, 
-    grabRadius: 50       // 手机端手指较粗，判定范围稍微调大
+    friction: 0.92,      
+    breakThreshold: 4.0, // 增加耐拉程度
+    grabRadius: 60       // 增大判定，更容易抓取
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -47,6 +33,8 @@ let points = [];
 let constraints = [];
 let width, height;
 let grabbedPoint = null;
+let touchX = 0;
+let touchY = 0;
 
 class Point {
     constructor(x, y) {
@@ -55,7 +43,9 @@ class Point {
         this.pinned = false;
     }
     update() {
+        // 关键修改：如果被抓取，完全跳过物理模拟
         if (this.pinned || this === grabbedPoint) return;
+        
         let vx = (this.x - this.px) * config.friction;
         let vy = (this.y - this.py) * config.friction;
         this.px = this.x; this.py = this.y;
@@ -68,7 +58,7 @@ class Constraint {
         this.p1 = p1;
         this.p2 = p2;
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 0.4);
+        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 0.5);
         this.broken = false;
     }
     resolve() {
@@ -77,16 +67,18 @@ class Constraint {
         const dy = this.p2.y - this.p1.y;
         const dist = Math.hypot(dx, dy);
         if (dist > this.limit) { this.broken = true; return; }
+        
         const diff = (this.initialDist - dist) / dist;
         const mul = diff * config.stiffness * 0.5;
         const offsetX = dx * mul; const offsetY = dy * mul;
+
+        // 如果点被抓住了，它就像“墙”一样纹丝不动，力只传递给另一端的邻居
         if (!this.p1.pinned && this.p1 !== grabbedPoint) { this.p1.x -= offsetX; this.p1.y -= offsetY; }
         if (!this.p2.pinned && this.p2 !== grabbedPoint) { this.p2.x += offsetX; this.p2.y += offsetY; }
     }
 }
 
 function init() {
-    // 处理高像素比屏幕，防止线条模糊
     const dpr = window.devicePixelRatio || 1;
     width = canvas.width = window.innerWidth * dpr;
     height = canvas.height = window.innerHeight * dpr;
@@ -114,39 +106,45 @@ function init() {
     }
 }
 
-// 统一交互处理函数
-function handleStart(clientX, clientY) {
+function handleStart(x, y) {
     let closest = null;
     let minDist = config.grabRadius;
+    touchX = x; touchY = y;
     for (let p of points) {
-        const d = Math.hypot(p.x - clientX, p.y - clientY);
+        const d = Math.hypot(p.x - x, p.y - y);
         if (d < minDist) { minDist = d; closest = p; }
     }
     if (closest) grabbedPoint = closest;
 }
 
-function handleMove(clientX, clientY) {
-    if (grabbedPoint) {
-        grabbedPoint.x = clientX;
-        grabbedPoint.y = clientY;
-        grabbedPoint.px = clientX;
-        grabbedPoint.py = clientY;
-    }
+function handleMove(x, y) {
+    touchX = x; touchY = y;
 }
 
-// 事件监听
-window.addEventListener('touchstart', e => { handleStart(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
-window.addEventListener('touchmove', e => { handleMove(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+window.addEventListener('touchstart', e => { 
+    handleStart(e.touches[0].clientX, e.touches[0].clientY); 
+    e.preventDefault(); 
+}, {passive: false});
+
+window.addEventListener('touchmove', e => { 
+    handleMove(e.touches[0].clientX, e.touches[0].clientY); 
+    e.preventDefault(); 
+}, {passive: false});
+
 window.addEventListener('touchend', () => { grabbedPoint = null; });
 
-// 同时也保留鼠标支持
-window.addEventListener('mousedown', e => handleStart(e.clientX, e.clientY));
-window.addEventListener('mousemove', e => handleMove(e.clientX, e.clientY));
-window.addEventListener('mouseup', () => grabbedPoint = null);
-
 function update() {
+    // 每一帧强制同步抓取点的位置
+    if (grabbedPoint) {
+        grabbedPoint.x = touchX;
+        grabbedPoint.y = touchY;
+        grabbedPoint.px = touchX;
+        grabbedPoint.py = touchY;
+    }
+    
     points.forEach(p => p.update());
-    for (let i = 0; i < 5; i++) constraints.forEach(c => c.resolve());
+    // 增加物理求解次数，使网格更有紧绷感
+    for (let i = 0; i < 7; i++) constraints.forEach(c => c.resolve());
 }
 
 function draw() {
