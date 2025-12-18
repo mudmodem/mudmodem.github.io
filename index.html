@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>蜘蛛网 - 强制抓取版</title>
+    <title>高强度蜘蛛网 - 强化版</title>
     <style>
         * { -webkit-tap-highlight-color: transparent; }
         body { 
@@ -18,12 +18,12 @@
 
 <script>
 const config = {
-    resX: 50,            // 稍微降低密度以换取极高的响应速度
-    resY: 70,            
-    stiffness: 0.9,      
-    friction: 0.92,      
-    breakThreshold: 4.0, // 增加耐拉程度
-    grabRadius: 60       // 增大判定，更容易抓取
+    resX: 45,            // 稍微疏一点，视觉上拉伸感更强
+    resY: 65,            
+    stiffness: 0.95,     // 增强网的拉力感
+    friction: 0.94,      
+    breakThreshold: 8.0, // 核心修改：大幅提高断裂门槛（原来的2倍）
+    grabRadius: 70       
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -43,9 +43,7 @@ class Point {
         this.pinned = false;
     }
     update() {
-        // 关键修改：如果被抓取，完全跳过物理模拟
         if (this.pinned || this === grabbedPoint) return;
-        
         let vx = (this.x - this.px) * config.friction;
         let vy = (this.y - this.py) * config.friction;
         this.px = this.x; this.py = this.y;
@@ -58,7 +56,8 @@ class Constraint {
         this.p1 = p1;
         this.p2 = p2;
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 0.5);
+        // 随机化每根线的极限，让断裂看起来更自然
+        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 2.0);
         this.broken = false;
     }
     resolve() {
@@ -66,13 +65,14 @@ class Constraint {
         const dx = this.p2.x - this.p1.x;
         const dy = this.p2.y - this.p1.y;
         const dist = Math.hypot(dx, dy);
+        
+        // 只有拉得非常长时才会断裂
         if (dist > this.limit) { this.broken = true; return; }
         
         const diff = (this.initialDist - dist) / dist;
         const mul = diff * config.stiffness * 0.5;
         const offsetX = dx * mul; const offsetY = dy * mul;
 
-        // 如果点被抓住了，它就像“墙”一样纹丝不动，力只传递给另一端的邻居
         if (!this.p1.pinned && this.p1 !== grabbedPoint) { this.p1.x -= offsetX; this.p1.y -= offsetY; }
         if (!this.p2.pinned && this.p2 !== grabbedPoint) { this.p2.x += offsetX; this.p2.y += offsetY; }
     }
@@ -94,6 +94,7 @@ function init() {
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
             let p = new Point(x * spX, y * spY);
+            // 固定四条边，形成一个完整的网面
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
@@ -134,7 +135,6 @@ window.addEventListener('touchmove', e => {
 window.addEventListener('touchend', () => { grabbedPoint = null; });
 
 function update() {
-    // 每一帧强制同步抓取点的位置
     if (grabbedPoint) {
         grabbedPoint.x = touchX;
         grabbedPoint.y = touchY;
@@ -143,16 +143,16 @@ function update() {
     }
     
     points.forEach(p => p.update());
-    // 增加物理求解次数，使网格更有紧绷感
-    for (let i = 0; i < 7; i++) constraints.forEach(c => c.resolve());
+    // 增加物理求解迭代，使网面更紧致、更有韧性
+    for (let i = 0; i < 10; i++) constraints.forEach(c => c.resolve());
 }
 
 function draw() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
     ctx.beginPath();
-    ctx.lineWidth = 0.4;
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
     for (let c of constraints) {
         if (!c.broken) {
             ctx.moveTo(c.p1.x, c.p1.y);
