@@ -3,27 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>蜘蛛网 - 灵敏平衡版</title>
+    <title>蜘蛛网交互修复版</title>
     <style>
-        * { -webkit-tap-highlight-color: transparent; }
+        * { -webkit-tap-highlight-color: transparent; touch-action: none; }
         body { 
-            margin: 0; background-color: #ffffff; overflow: hidden; 
-            touch-action: none; position: fixed; width: 100%; height: 100%;
+            margin: 0; padding: 0; background-color: #ffffff; 
+            overflow: hidden; position: fixed; width: 100%; height: 100%;
         }
-        canvas { display: block; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .ui {
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: #ddd; font-size: 10px; pointer-events: none; font-family: sans-serif;
+        }
     </style>
 </head>
 <body>
+    <div class="ui">手指按住滑动拉扯 / 双击重置</div>
     <canvas id="webCanvas"></canvas>
 
 <script>
+// --- 核心配置 ---
 const config = {
-    resX: 45,            
-    resY: 65,            
-    stiffness: 0.7,      // 降低硬度，让网更容易被拉动
-    friction: 0.94,      
-    breakThreshold: 6.0, // 适中的断裂长度
-    grabRadius: 80       // 进一步加大抓取半径，确保触控灵敏
+    resX: 40,            // 稍微降低密度确保流畅
+    resY: 60,            
+    stiffness: 0.5,      // 降低硬度，让拉扯变得轻盈
+    friction: 0.92,      
+    breakThreshold: 7.0, // 拉长7倍断裂
+    grabRadius: 80       
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -33,8 +39,7 @@ let points = [];
 let constraints = [];
 let width, height;
 let grabbedPoint = null;
-let touchX = 0;
-let touchY = 0;
+let curX = 0, curY = 0;
 
 class Point {
     constructor(x, y) {
@@ -53,115 +58,104 @@ class Point {
 
 class Constraint {
     constructor(p1, p2) {
-        this.p1 = p1;
-        this.p2 = p2;
+        this.p1 = p1; this.p2 = p2;
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 2.0);
+        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 2);
         this.broken = false;
     }
     resolve() {
         if (this.broken) return;
         const dx = this.p2.x - this.p1.x;
         const dy = this.p2.y - this.p1.y;
-        const dist = Math.hypot(dx, dy);
+        const d = Math.hypot(dx, dy);
         
-        if (dist > this.limit) { this.broken = true; return; }
+        if (d > this.limit) { this.broken = true; return; }
         
-        const diff = (this.initialDist - dist) / dist;
-        const mul = diff * config.stiffness * 0.5;
-        const offsetX = dx * mul; const offsetY = dy * mul;
+        const diff = (this.initialDist - d) / d;
+        const m = diff * config.stiffness * 0.5;
+        const ox = dx * m; const oy = dy * m;
 
-        if (!this.p1.pinned && this.p1 !== grabbedPoint) { 
-            this.p1.x -= offsetX; this.p1.y -= offsetY; 
-        }
-        if (!this.p2.pinned && this.p2 !== grabbedPoint) { 
-            this.p2.x += offsetX; this.p2.y += offsetY; 
-        }
+        if (!this.p1.pinned && this.p1 !== grabbedPoint) { this.p1.x -= ox; this.p1.y -= oy; }
+        if (!this.p2.pinned && this.p2 !== grabbedPoint) { this.p2.x += ox; this.p2.y += oy; }
     }
 }
 
 function init() {
     const dpr = window.devicePixelRatio || 1;
-    width = canvas.width = window.innerWidth * dpr;
-    height = canvas.height = window.innerHeight * dpr;
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
-    canvas.style.width = window.innerWidth + 'px';
-    canvas.style.height = window.innerHeight + 'px';
 
     points = [];
     constraints = [];
-    const spX = window.innerWidth / (config.resX - 1);
-    const spY = window.innerHeight / (config.resY - 1);
+    const spX = width / (config.resX - 1);
+    const spY = height / (config.resY - 1);
 
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
             let p = new Point(x * spX, y * spY);
-            // 固定四边
+            // 固定四周
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
     }
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
-            if (x < config.resX - 1) constraints.push(new Constraint(points[y * config.resX + x], points[y * config.resX + x + 1]));
-            if (y < config.resY - 1) constraints.push(new Constraint(points[y * config.resX + x], points[(y + 1) * config.resX + x]));
+            if (x < config.resX - 1) constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
+            if (y < config.resY - 1) constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
         }
     }
 }
 
-function handleStart(x, y) {
-    let closest = null;
+// 统一交互逻辑
+const getPos = (e) => {
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX, y: t.clientY };
+};
+
+const onStart = (e) => {
+    const pos = getPos(e);
+    curX = pos.x; curY = pos.y;
     let minDist = config.grabRadius;
-    touchX = x; touchY = y;
+    grabbedPoint = null;
     for (let p of points) {
-        const d = Math.hypot(p.x - x, p.y - y);
-        if (d < minDist) { minDist = d; closest = p; }
+        const d = Math.hypot(p.x - curX, p.y - curY);
+        if (d < minDist) { minDist = d; grabbedPoint = p; }
     }
-    if (closest) {
-        grabbedPoint = closest;
-        // 瞬间同步防止跳变
-        grabbedPoint.x = x;
-        grabbedPoint.y = y;
-    }
-}
+};
 
-function handleMove(x, y) {
-    if (grabbedPoint) {
-        touchX = x; 
-        touchY = y;
-    }
-}
+const onMove = (e) => {
+    const pos = getPos(e);
+    curX = pos.x; curY = pos.y;
+    if (e.touches) e.preventDefault();
+};
 
-window.addEventListener('touchstart', e => { 
-    const t = e.touches[0];
-    handleStart(t.clientX, t.clientY); 
-    e.preventDefault(); 
-}, {passive: false});
+const onEnd = () => { grabbedPoint = null; };
 
-window.addEventListener('touchmove', e => { 
-    const t = e.touches[0];
-    handleMove(t.clientX, t.clientY); 
-    e.preventDefault(); 
-}, {passive: false});
-
-window.addEventListener('touchend', () => { grabbedPoint = null; });
+canvas.addEventListener('touchstart', onStart, {passive: false});
+window.addEventListener('touchmove', onMove, {passive: false});
+window.addEventListener('touchend', onEnd);
+canvas.addEventListener('mousedown', onStart);
+window.addEventListener('mousemove', onMove);
+window.addEventListener('mouseup', onEnd);
+window.addEventListener('dblclick', init); // 双击重置网格
 
 function update() {
     if (grabbedPoint) {
-        grabbedPoint.x = touchX;
-        grabbedPoint.y = touchY;
-        grabbedPoint.px = touchX;
-        grabbedPoint.py = touchY;
+        grabbedPoint.x = curX;
+        grabbedPoint.y = curY;
+        grabbedPoint.px = curX;
+        grabbedPoint.py = curY;
     }
-    
     points.forEach(p => p.update());
-    // 物理步进次数降为 5，兼顾流畅度与拉力
     for (let i = 0; i < 5; i++) constraints.forEach(c => c.resolve());
 }
 
 function draw() {
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.fillRect(0, 0, width, height);
     ctx.beginPath();
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = 'rgba(0,0,0,0.2)';
@@ -172,16 +166,12 @@ function draw() {
         }
     }
     ctx.stroke();
-}
-
-function loop() {
-    update(); draw();
-    requestAnimationFrame(loop);
+    requestAnimationFrame(() => { update(); draw(); });
 }
 
 window.addEventListener('resize', init);
 init();
-loop();
+draw();
 </script>
 </body>
 </html>
