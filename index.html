@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>物理弹性破碎网格</title>
+    <title>撕碎</title>
     <style>
         * { -webkit-tap-highlight-color: transparent; touch-action: none; }
         body { 
@@ -18,15 +18,15 @@
 
 <script>
 const config = {
-    resX: 35,            
-    resY: 55,            
-    stiffness: 0.65,      
+    resX: 38,            
+    resY: 58,            
+    stiffness: 0.6,      
     friction: 0.94,      
-    baseBreakThreshold: 3.5, 
-    protectRadius: 90,     
-    randomBreakChance: 0.3, // 提高断裂概率
-    recoilStrength: 1.5,    // 断裂时的回弹力强度
-    maxColorStretch: 15  
+    baseBreakThreshold: 3.2, 
+    protectRadius: 85,     
+    randomBreakChance: 0.4, 
+    recoilStrength: 1.8,    
+    maxColorStretch: 18  
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -39,10 +39,10 @@ let grabbedPoint = null;
 let curX = 0, curY = 0;
 
 function interpolateColor(value) {
-    // 从黑灰色 #333 到 鲜艳的深红色 #D32F2F 的过渡
-    const r = 51 + (211 - 51) * value;
-    const g = 51 + (47 - 51) * value;
-    const b = 51 + (47 - 51) * value;
+    // 高级感配色：从浅烟灰 #888 到 浓郁的暗紫黑 #2C003E 的过渡
+    const r = 136 + (44 - 136) * value;
+    const g = 136 + (0 - 136) * value;
+    const b = 136 + (62 - 136) * value;
     return `rgb(${r},${g},${b})`;
 }
 
@@ -64,9 +64,10 @@ class Point {
 class Constraint {
     constructor(p1, p2) {
         this.p1 = p1; this.p2 = p2;
-        // 增加初始长度的随机性，使网格看起来大小不一
         const actualDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.initialDist = actualDist * (0.8 + Math.random() * 0.4);
+        this.initialDist = actualDist;
+        // 每根连线都有随机的抗拉强度因子，打破均匀性
+        this.toughness = 0.8 + Math.random() * 1.5;
         this.broken = false;
     }
     resolve() {
@@ -80,14 +81,16 @@ class Constraint {
             const centerY = (this.p1.y + this.p2.y) / 2;
             const distFromGrab = Math.hypot(centerX - curX, centerY - curY);
 
+            // 保护区外逻辑
             if (distFromGrab > config.protectRadius) {
-                if (d > this.initialDist * config.baseBreakThreshold) {
+                // 结合个体韧性进行断裂判定
+                if (d > this.initialDist * config.baseBreakThreshold * this.toughness) {
                     if (Math.random() < config.randomBreakChance) {
                         this.broken = true;
-                        // --- 物理弹性回弹逻辑 ---
-                        const strength = config.recoilStrength;
-                        if (!this.p1.pinned) { this.p1.x -= dx * strength; this.p1.y -= dy * strength; }
-                        if (!this.p2.pinned) { this.p2.x += dx * strength; this.p2.y += dy * strength; }
+                        // 释放应力时的强烈回弹
+                        const s = config.recoilStrength;
+                        if (!this.p1.pinned) { this.p1.x -= dx * s; this.p1.y -= dy * s; }
+                        if (!this.p2.pinned) { this.p2.x += dx * s; this.p2.y += dy * s; }
                         return;
                     }
                 }
@@ -112,20 +115,30 @@ function init() {
     const spX = width / (config.resX - 1);
     const spY = height / (config.resY - 1);
 
+    // 1. 生成带高度随机扰动的点阵
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
-            // 给点的初始位置增加抖动，形成随机大小的网格
-            const offsetX = (Math.random() - 0.5) * spX * 0.5;
-            const offsetY = (Math.random() - 0.5) * spY * 0.5;
+            // 大幅增加点位置的不规则性，产生非正方形外观
+            const jitter = 0.7; 
+            const offsetX = (Math.random() - 0.5) * spX * jitter;
+            const offsetY = (Math.random() - 0.5) * spY * jitter;
+            
             let p = new Point(x * spX + offsetX, y * spY + offsetY);
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
     }
+    
+    // 2. 建立约束关系
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
             if (x < config.resX - 1) constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
             if (y < config.resY - 1) constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
+            
+            // 3. 随机增加斜向连线，增加结构的复杂度和破碎后的不规则形状
+            if (x < config.resX - 1 && y < config.resY - 1 && Math.random() > 0.7) {
+                constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x+1]));
+            }
         }
     }
 }
@@ -138,7 +151,7 @@ const getPos = (e) => {
 const onStart = (e) => {
     const pos = getPos(e);
     curX = pos.x; curY = pos.y;
-    let minDist = 80; grabbedPoint = null;
+    let minDist = 70; grabbedPoint = null;
     for (let p of points) {
         const d = Math.hypot(p.x - curX, p.y - curY);
         if (d < minDist) { minDist = d; grabbedPoint = p; }
@@ -165,18 +178,21 @@ function update() {
         grabbedPoint.px = curX; grabbedPoint.py = curY;
     }
     points.forEach(p => p.update());
-    for (let i = 0; i < 5; i++) constraints.forEach(c => c.resolve());
+    for (let i = 0; i < 6; i++) constraints.forEach(c => c.resolve());
 }
 
 function draw() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    ctx.lineWidth = 1.0; 
+    
+    // 使用稍微粗一点的线条增加质感
+    ctx.lineWidth = 0.8; 
 
     for (let c of constraints) {
         if (!c.broken) {
             const d = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
             const ratio = Math.min(1, Math.max(0, d - c.initialDist) / config.maxColorStretch);
+            
             ctx.strokeStyle = interpolateColor(ratio);
             ctx.beginPath();
             ctx.moveTo(c.p1.x, c.p1.y);
