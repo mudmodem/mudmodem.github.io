@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>蜘蛛网：受力断裂版</title>
+    <title>物理弹性破碎网格</title>
     <style>
         * { -webkit-tap-highlight-color: transparent; touch-action: none; }
         body { 
-            margin: 0; padding: 0; background-color: #080808; 
+            margin: 0; padding: 0; background-color: #ffffff; 
             overflow: hidden; position: fixed; width: 100%; height: 100%;
         }
         canvas { display: block; width: 100%; height: 100%; }
@@ -18,13 +18,14 @@
 
 <script>
 const config = {
-    resX: 40,            
-    resY: 60,            
-    stiffness: 0.6,      
-    friction: 0.93,      
-    baseBreakThreshold: 4.5, // 基础断裂倍数
-    protectRadius: 110,      // 抓取点周围 110px 内不破碎
-    randomBreakChance: 0.15, // 达到受力极限时，发生随机断裂的概率
+    resX: 35,            
+    resY: 55,            
+    stiffness: 0.65,      
+    friction: 0.94,      
+    baseBreakThreshold: 3.5, 
+    protectRadius: 90,     
+    randomBreakChance: 0.3, // 提高断裂概率
+    recoilStrength: 1.5,    // 断裂时的回弹力强度
     maxColorStretch: 15  
 };
 
@@ -37,27 +38,12 @@ let width, height;
 let grabbedPoint = null;
 let curX = 0, curY = 0;
 
-function hslToRgb(h, s, l) {
-    let c = (1 - Math.abs(2 * l - 1)) * s,
-        x = c * (1 - Math.abs((h / 60) % 2 - 1)),
-        m = l - c / 2,
-        r = 0, g = 0, b = 0;
-    if (0 <= h && h < 60) { r = c; g = x; b = 0; }
-    else if (60 <= h && h < 120) { r = x; g = c; b = 0; }
-    else if (120 <= h && h < 180) { r = 0; g = c; b = x; }
-    else if (180 <= h && h < 240) { r = 0; g = x; b = c; }
-    else if (240 <= h && h < 300) { r = x; g = 0; b = c; }
-    else if (300 <= h && h < 360) { r = c; g = 0; b = x; }
-    return `rgb(${Math.round((r + m) * 255)},${Math.round((g + m) * 255)},${Math.round((b + m) * 255)})`;
-}
-
-function interpolateColorHSL(value) {
-    const baseH = 220; const baseS = 0.1; const baseL = 0.25; 
-    const activeH = 320; const activeS = 0.8; const activeL = 0.7; 
-    const h = baseH + (activeH - baseH) * value;
-    const s = baseS + (activeS - baseS) * value;
-    const l = baseL + (activeL - baseL) * value;
-    return hslToRgb(h % 360, s, l);
+function interpolateColor(value) {
+    // 从黑灰色 #333 到 鲜艳的深红色 #D32F2F 的过渡
+    const r = 51 + (211 - 51) * value;
+    const g = 51 + (47 - 51) * value;
+    const b = 51 + (47 - 51) * value;
+    return `rgb(${r},${g},${b})`;
 }
 
 class Point {
@@ -78,7 +64,9 @@ class Point {
 class Constraint {
     constructor(p1, p2) {
         this.p1 = p1; this.p2 = p2;
-        this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        // 增加初始长度的随机性，使网格看起来大小不一
+        const actualDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        this.initialDist = actualDist * (0.8 + Math.random() * 0.4);
         this.broken = false;
     }
     resolve() {
@@ -87,19 +75,19 @@ class Constraint {
         const dy = this.p2.y - this.p1.y;
         const d = Math.hypot(dx, dy);
         
-        // --- 新的断裂逻辑 ---
         if (grabbedPoint) {
-            // 计算线条中点距离抓取点的距离
             const centerX = (this.p1.x + this.p2.x) / 2;
             const centerY = (this.p1.y + this.p2.y) / 2;
             const distFromGrab = Math.hypot(centerX - curX, centerY - curY);
 
-            // 如果不在保护区内
             if (distFromGrab > config.protectRadius) {
-                // 如果拉伸超过基础阈值，且触发随机概率，则断裂
                 if (d > this.initialDist * config.baseBreakThreshold) {
                     if (Math.random() < config.randomBreakChance) {
                         this.broken = true;
+                        // --- 物理弹性回弹逻辑 ---
+                        const strength = config.recoilStrength;
+                        if (!this.p1.pinned) { this.p1.x -= dx * strength; this.p1.y -= dy * strength; }
+                        if (!this.p2.pinned) { this.p2.x += dx * strength; this.p2.y += dy * strength; }
                         return;
                     }
                 }
@@ -120,11 +108,16 @@ function init() {
     canvas.width = width * dpr; canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
     points = []; constraints = [];
+    
     const spX = width / (config.resX - 1);
     const spY = height / (config.resY - 1);
+
     for (let y = 0; y < config.resY; y++) {
         for (let x = 0; x < config.resX; x++) {
-            let p = new Point(x * spX, y * spY);
+            // 给点的初始位置增加抖动，形成随机大小的网格
+            const offsetX = (Math.random() - 0.5) * spX * 0.5;
+            const offsetY = (Math.random() - 0.5) * spY * 0.5;
+            let p = new Point(x * spX + offsetX, y * spY + offsetY);
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
             points.push(p);
         }
@@ -137,9 +130,14 @@ function init() {
     }
 }
 
-const onStart = (e) => {
+const getPos = (e) => {
     const t = e.touches ? e.touches[0] : e;
-    curX = t.clientX; curY = t.clientY;
+    return { x: t.clientX, y: t.clientY };
+};
+
+const onStart = (e) => {
+    const pos = getPos(e);
+    curX = pos.x; curY = pos.y;
     let minDist = 80; grabbedPoint = null;
     for (let p of points) {
         const d = Math.hypot(p.x - curX, p.y - curY);
@@ -148,8 +146,8 @@ const onStart = (e) => {
 };
 
 const onMove = (e) => {
-    const t = e.touches ? e.touches[0] : e;
-    curX = t.clientX; curY = t.clientY;
+    const pos = getPos(e);
+    curX = pos.x; curY = pos.y;
     if (e.touches) e.preventDefault();
 };
 
@@ -171,15 +169,15 @@ function update() {
 }
 
 function draw() {
-    ctx.fillStyle = '#080808';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    ctx.lineWidth = 1.2; 
+    ctx.lineWidth = 1.0; 
 
     for (let c of constraints) {
         if (!c.broken) {
             const d = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
             const ratio = Math.min(1, Math.max(0, d - c.initialDist) / config.maxColorStretch);
-            ctx.strokeStyle = interpolateColorHSL(ratio);
+            ctx.strokeStyle = interpolateColor(ratio);
             ctx.beginPath();
             ctx.moveTo(c.p1.x, c.p1.y);
             ctx.lineTo(c.p2.x, c.p2.y);
