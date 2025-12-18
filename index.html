@@ -3,34 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>亮丽色彩蜘蛛网</title>
+    <title>蜘蛛网：受力断裂版</title>
     <style>
         * { -webkit-tap-highlight-color: transparent; touch-action: none; }
         body { 
-            margin: 0; padding: 0; background-color: #0a0a0a; /* 换成深色背景，彩色会更亮眼 */
+            margin: 0; padding: 0; background-color: #080808; 
             overflow: hidden; position: fixed; width: 100%; height: 100%;
         }
         canvas { display: block; width: 100%; height: 100%; }
-        .ui {
-            position: absolute; top: 10px; width: 100%; text-align: center;
-            color: #444; font-size: 10px; pointer-events: none; font-family: sans-serif;
-        }
     </style>
 </head>
 <body>
-    <div class="ui">强力拉扯以激发高饱和色彩 / 双击重置</div>
     <canvas id="webCanvas"></canvas>
 
 <script>
 const config = {
     resX: 40,            
     resY: 60,            
-    stiffness: 0.5,      
-    friction: 0.92,      
-    breakThreshold: 8.0, 
-    grabRadius: 80,
-    // 关键：减小这个值，会让颜色扩散得更远、更灵敏
-    maxColorStretch: 12  
+    stiffness: 0.6,      
+    friction: 0.93,      
+    baseBreakThreshold: 4.5, // 基础断裂倍数
+    protectRadius: 110,      // 抓取点周围 110px 内不破碎
+    randomBreakChance: 0.15, // 达到受力极限时，发生随机断裂的概率
+    maxColorStretch: 15  
 };
 
 const canvas = document.getElementById('webCanvas');
@@ -56,20 +51,13 @@ function hslToRgb(h, s, l) {
     return `rgb(${Math.round((r + m) * 255)},${Math.round((g + m) * 255)},${Math.round((b + m) * 255)})`;
 }
 
-// 颜色逻辑：从暗灰到亮丽荧光色彩的转变
 function interpolateColorHSL(value) {
-    // 基础态：暗沉的深灰偏蓝
-    const baseH = 210; 
-    const baseS = 0.2; 
-    const baseL = 0.2; 
-
-    // 激活态：高饱和度的极光色/洋红色调
-    // 随着拉伸，色相从 210 (蓝) 跨越到 330 (紫红)
-    const activeH = 210 + (120 * value); 
-    const activeS = 0.2 + (0.7 * value); // 饱和度大幅提升到 90%
-    const activeL = 0.2 + (0.5 * value); // 亮度大幅提升到 70%
-    
-    return hslToRgb(activeH % 360, activeS, activeL);
+    const baseH = 220; const baseS = 0.1; const baseL = 0.25; 
+    const activeH = 320; const activeS = 0.8; const activeL = 0.7; 
+    const h = baseH + (activeH - baseH) * value;
+    const s = baseS + (activeS - baseS) * value;
+    const l = baseL + (activeL - baseL) * value;
+    return hslToRgb(h % 360, s, l);
 }
 
 class Point {
@@ -91,7 +79,6 @@ class Constraint {
     constructor(p1, p2) {
         this.p1 = p1; this.p2 = p2;
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        this.limit = this.initialDist * (config.breakThreshold + Math.random() * 2);
         this.broken = false;
     }
     resolve() {
@@ -99,7 +86,26 @@ class Constraint {
         const dx = this.p2.x - this.p1.x;
         const dy = this.p2.y - this.p1.y;
         const d = Math.hypot(dx, dy);
-        if (d > this.limit) { this.broken = true; return; }
+        
+        // --- 新的断裂逻辑 ---
+        if (grabbedPoint) {
+            // 计算线条中点距离抓取点的距离
+            const centerX = (this.p1.x + this.p2.x) / 2;
+            const centerY = (this.p1.y + this.p2.y) / 2;
+            const distFromGrab = Math.hypot(centerX - curX, centerY - curY);
+
+            // 如果不在保护区内
+            if (distFromGrab > config.protectRadius) {
+                // 如果拉伸超过基础阈值，且触发随机概率，则断裂
+                if (d > this.initialDist * config.baseBreakThreshold) {
+                    if (Math.random() < config.randomBreakChance) {
+                        this.broken = true;
+                        return;
+                    }
+                }
+            }
+        }
+
         const diff = (this.initialDist - d) / d;
         const m = diff * config.stiffness * 0.5;
         const ox = dx * m; const oy = dy * m;
@@ -110,13 +116,10 @@ class Constraint {
 
 function init() {
     const dpr = window.devicePixelRatio || 1;
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    width = window.innerWidth; height = window.innerHeight;
+    canvas.width = width * dpr; canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
-    points = [];
-    constraints = [];
+    points = []; constraints = [];
     const spX = width / (config.resX - 1);
     const spY = height / (config.resY - 1);
     for (let y = 0; y < config.resY; y++) {
@@ -134,16 +137,10 @@ function init() {
     }
 }
 
-const getPos = (e) => {
-    const t = e.touches ? e.touches[0] : e;
-    return { x: t.clientX, y: t.clientY };
-};
-
 const onStart = (e) => {
-    const pos = getPos(e);
-    curX = pos.x; curY = pos.y;
-    let minDist = config.grabRadius;
-    grabbedPoint = null;
+    const t = e.touches ? e.touches[0] : e;
+    curX = t.clientX; curY = t.clientY;
+    let minDist = 80; grabbedPoint = null;
     for (let p of points) {
         const d = Math.hypot(p.x - curX, p.y - curY);
         if (d < minDist) { minDist = d; grabbedPoint = p; }
@@ -151,12 +148,12 @@ const onStart = (e) => {
 };
 
 const onMove = (e) => {
-    const pos = getPos(e);
-    curX = pos.x; curY = pos.y;
+    const t = e.touches ? e.touches[0] : e;
+    curX = t.clientX; curY = t.clientY;
     if (e.touches) e.preventDefault();
 };
 
-window.addEventListener('touchstart', onStart, {passive: false});
+canvas.addEventListener('touchstart', onStart, {passive: false});
 window.addEventListener('touchmove', onMove, {passive: false});
 window.addEventListener('touchend', () => { grabbedPoint = null; });
 canvas.addEventListener('mousedown', onStart);
@@ -174,18 +171,15 @@ function update() {
 }
 
 function draw() {
-    ctx.fillStyle = '#0a0a0a'; // 黑色背景让彩色更亮眼
+    ctx.fillStyle = '#080808';
     ctx.fillRect(0, 0, width, height);
-    ctx.lineWidth = 1.0; 
+    ctx.lineWidth = 1.2; 
 
     for (let c of constraints) {
         if (!c.broken) {
-            const currentDist = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
-            // 颜色扩散逻辑：即使只有微小的拉伸也会触发颜色变化
-            const stretchRatio = Math.max(0, currentDist - c.initialDist);
-            const normalizedStretch = Math.min(1, stretchRatio / config.maxColorStretch);
-            
-            ctx.strokeStyle = interpolateColorHSL(normalizedStretch);
+            const d = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
+            const ratio = Math.min(1, Math.max(0, d - c.initialDist) / config.maxColorStretch);
+            ctx.strokeStyle = interpolateColorHSL(ratio);
             ctx.beginPath();
             ctx.moveTo(c.p1.x, c.p1.y);
             ctx.lineTo(c.p2.x, c.p2.y);
