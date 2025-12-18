@@ -1,451 +1,226 @@
 <!DOCTYPE html>
-
 <html lang="zh-CN">
-
 <head>
-
     <meta charset="UTF-8">
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-
-    <title>网</title>
-
+    <title>高级灰色彩蜘蛛网</title>
     <style>
-
         * { -webkit-tap-highlight-color: transparent; touch-action: none; }
-
         body { 
-
             margin: 0; padding: 0; background-color: #f0f0f0; /* 浅灰白背景 */
-
             overflow: hidden; position: fixed; width: 100%; height: 100%;
-
         }
-
         canvas { display: block; width: 100%; height: 100%; }
-
         .ui {
-
             position: absolute; top: 10px; width: 100%; text-align: center;
-
             color: #ccc; font-size: 10px; pointer-events: none; font-family: sans-serif;
-
         }
-
     </style>
-
 </head>
-
 <body>
-
     <div class="ui">手指按住滑动拉扯 / 双击重置</div>
-
     <canvas id="webCanvas"></canvas>
 
-
-
 <script>
-
 // --- 核心配置 ---
-
 const config = {
-
     resX: 40,            
-
     resY: 60,            
-
     stiffness: 0.5,      
-
     friction: 0.92,      
-
     breakThreshold: 7.0, 
-
     grabRadius: 80,
-
     maxColorStretch: 20  // 颜色变化的拉伸最大距离，值越大颜色变化越慢
-
 };
 
-
-
 const canvas = document.getElementById('webCanvas');
-
 const ctx = canvas.getContext('2d');
 
-
-
 let points = [];
-
 let constraints = [];
-
 let width, height;
-
 let grabbedPoint = null;
-
 let curX = 0, curY = 0;
 
-
-
 // HSL转RGB函数 (用于颜色插值)
-
 function hslToRgb(h, s, l) {
-
     let c = (1 - Math.abs(2 * l - 1)) * s,
-
         x = c * (1 - Math.abs((h / 60) % 2 - 1)),
-
         m = l - c / 2,
-
         r = 0, g = 0, b = 0;
-
     if (0 <= h && h < 60) { r = c; g = x; b = 0; }
-
     else if (60 <= h && h < 120) { r = x; g = c; b = 0; }
-
     else if (120 <= h && h < 180) { r = 0; g = c; b = x; }
-
     else if (180 <= h && h < 240) { r = 0; g = x; b = c; }
-
     else if (240 <= h && h < 300) { r = x; g = 0; b = c; }
-
     else if (300 <= h && h < 360) { r = c; g = 0; b = x; }
-
     r = Math.round((r + m) * 255);
-
     g = Math.round((g + m) * 255);
-
     b = Math.round((b + m) * 255);
-
     return `rgb(${r},${g},${b})`;
-
 }
-
-
 
 // 颜色插值函数 (HSL空间)
-
 function interpolateColorHSL(value) {
-
     // 基础色：冷灰 (偏蓝绿)
-
     const baseH = 200; // 蓝色调
-
     const baseS = 0.05; // 饱和度极低
-
     const baseL = 0.5; // 中等亮度
-
     
-
     // 激活色：暖灰 (偏紫红) 或亮灰
-
     const activeH = 300; // 紫红调
-
     const activeS = 0.15; // 饱和度稍高一点
-
     const activeL = 0.85; // 亮度非常高
 
-
-
     // value 是 0 到 1 的拉伸程度
-
     const h = baseH + (activeH - baseH) * value;
-
     const s = baseS + (activeS - baseS) * value;
-
     const l = baseL + (activeL - baseL) * value;
-
     
-
     return hslToRgb(h, s, l);
-
 }
-
-
-
 
 
 class Point {
-
     constructor(x, y) {
-
         this.x = x; this.y = y;
-
         this.px = x; this.py = y;
-
         this.pinned = false;
-
     }
-
     update() {
-
         if (this.pinned || this === grabbedPoint) return;
-
         let vx = (this.x - this.px) * config.friction;
-
         let vy = (this.y - this.py) * config.friction;
-
         this.px = this.x; this.py = this.y;
-
         this.x += vx; this.y += vy;
-
     }
-
 }
-
-
 
 class Constraint {
-
     constructor(p1, p2) {
-
         this.p1 = p1; this.p2 = p2;
-
         this.initialDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-
         this.limit = this.initialDist * (config.breakThreshold + Math.random() * 2);
-
         this.broken = false;
-
     }
-
     resolve() {
-
         if (this.broken) return;
-
         const dx = this.p2.x - this.p1.x;
-
         const dy = this.p2.y - this.p1.y;
-
         const d = Math.hypot(dx, dy);
-
         
-
         if (d > this.limit) { this.broken = true; return; }
-
         
-
         const diff = (this.initialDist - d) / d;
-
         const m = diff * config.stiffness * 0.5;
-
         const ox = dx * m; const oy = dy * m;
 
-
-
         if (!this.p1.pinned && this.p1 !== grabbedPoint) { this.p1.x -= ox; this.p1.y -= oy; }
-
         if (!this.p2.pinned && this.p2 !== grabbedPoint) { this.p2.x += ox; this.p2.y += oy; }
-
     }
-
 }
-
-
 
 function init() {
-
     const dpr = window.devicePixelRatio || 1;
-
     width = window.innerWidth;
-
     height = window.innerHeight;
-
     canvas.width = width * dpr;
-
     canvas.height = height * dpr;
-
     ctx.scale(dpr, dpr);
 
-
-
     points = [];
-
     constraints = [];
-
     const spX = width / (config.resX - 1);
-
     const spY = height / (config.resY - 1);
 
-
-
     for (let y = 0; y < config.resY; y++) {
-
         for (let x = 0; x < config.resX; x++) {
-
             let p = new Point(x * spX, y * spY);
-
             if (x === 0 || x === config.resX - 1 || y === 0 || y === config.resY - 1) p.pinned = true;
-
             points.push(p);
-
         }
-
     }
-
     for (let y = 0; y < config.resY; y++) {
-
         for (let x = 0; x < config.resX; x++) {
-
             if (x < config.resX - 1) constraints.push(new Constraint(points[y*config.resX+x], points[y*config.resX+x+1]));
-
             if (y < config.resY - 1) constraints.push(new Constraint(points[y*config.resX+x], points[(y+1)*config.resX+x]));
-
         }
-
     }
-
 }
 
-
-
 const getPos = (e) => {
-
     const t = e.touches ? e.touches[0] : e;
-
     return { x: t.clientX, y: t.clientY };
-
 };
-
-
 
 const onStart = (e) => {
-
     const pos = getPos(e);
-
     curX = pos.x; curY = pos.y;
-
     let minDist = config.grabRadius;
-
     grabbedPoint = null;
-
     for (let p of points) {
-
         const d = Math.hypot(p.x - curX, p.y - curY);
-
         if (d < minDist) { minDist = d; grabbedPoint = p; }
-
     }
-
     if (grabbedPoint) {
-
         grabbedPoint.x = curX;
-
         grabbedPoint.y = curY;
-
     }
-
 };
-
-
 
 const onMove = (e) => {
-
     const pos = getPos(e);
-
     curX = pos.x; curY = pos.y;
-
     if (e.touches) e.preventDefault();
-
 };
-
-
 
 const onEnd = () => { grabbedPoint = null; };
 
-
-
 canvas.addEventListener('touchstart', onStart, {passive: false});
-
 window.addEventListener('touchmove', onMove, {passive: false});
-
 window.addEventListener('touchend', onEnd);
-
 canvas.addEventListener('mousedown', onStart);
-
 window.addEventListener('mousemove', onMove);
-
 canvas.addEventListener('mouseup', onEnd);
-
 window.addEventListener('dblclick', init); 
 
-
-
 function update() {
-
     if (grabbedPoint) {
-
         grabbedPoint.x = curX;
-
         grabbedPoint.y = curY;
-
         grabbedPoint.px = curX;
-
         grabbedPoint.py = curY;
-
     }
-
     points.forEach(p => p.update());
-
     for (let i = 0; i < 5; i++) constraints.forEach(c => c.resolve());
-
 }
-
-
 
 function draw() {
-
     ctx.fillStyle = '#f0f0f0'; // 浅灰白背景
-
     ctx.fillRect(0, 0, width, height);
-
     
-
     ctx.lineWidth = 0.8; // 稍微加粗线条以便看清颜色
 
-
-
     // 独立绘制每根线条以支持动态颜色
-
     for (let c of constraints) {
-
         if (!c.broken) {
-
             const currentDist = Math.hypot(c.p1.x - c.p2.x, c.p1.y - c.p2.y);
-
             const stretchRatio = Math.max(0, currentDist - c.initialDist); // 计算拉伸距离
-
             const normalizedStretch = Math.min(1, stretchRatio / config.maxColorStretch); // 归一化到 0-1
-
             
-
             ctx.strokeStyle = interpolateColorHSL(normalizedStretch);
-
             ctx.beginPath();
-
             ctx.moveTo(c.p1.x, c.p1.y);
-
             ctx.lineTo(c.p2.x, c.p2.y);
-
             ctx.stroke();
-
         }
-
     }
-
     requestAnimationFrame(() => { update(); draw(); });
-
 }
 
-
-
 window.addEventListener('resize', init);
-
 init();
-
 draw();
-
 </script>
-
 </body>
-
 </html>
